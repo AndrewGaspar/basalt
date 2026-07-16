@@ -51,7 +51,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <opengv/sac_problems/absolute_pose/AbsolutePoseSacProblem.hpp>
 #include <opengv/sac_problems/relative_pose/CentralRelativePoseSacProblem.hpp>
 
-#include <opencv2/calib3d/calib3d.hpp>
+#include <opencv2/calib3d.hpp>
 
 namespace basalt {
 

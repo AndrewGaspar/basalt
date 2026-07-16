@@ -38,7 +38,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/utils/build_config.h>
 #include <basalt/utils/keypoints.h>
 
+#include "opencv2/core/version.hpp"
+
+#if CV_VERSION_MAJOR >= 5
+#include <opencv2/features.hpp>
+#else
 #include <opencv2/features2d/features2d.hpp>
+#endif
+
+#include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
 #ifndef BASALT_BUILD_SHARED_LIBRARY_ONLY

@@ -1,6 +1,12 @@
 
 #include "opencv2/opencv.hpp"
 
+#if CV_VERSION_MAJOR >= 5
+#include <opencv2/geometry/3d.hpp>
+#endif
+
+#include <opencv2/calib3d.hpp>
+
 #include "apriltags/TagDetection.h"
 #include "apriltags/MathUtil.h"
 
