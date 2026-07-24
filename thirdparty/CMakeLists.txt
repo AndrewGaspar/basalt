@@ -95,25 +95,30 @@ if(BASALT_BUILD_VISUALIZATION)
 endif()
 
 # opengv and pangolin assume that eigen is found outside the source
-# directory and thus include it in INTERFACE_INCLUDE_DIRECTORIES,
-# which makes cmake complain that that property contains paths in the
-# source folder. Thus, we update the property to only include these
-# eigen paths in the "BUILD_INTERFACE" (not "INSTALL").
+# directory and thus include it in INTERFACE_INCLUDE_DIRECTORIES and
+# INTERFACE_SYSTEM_INCLUDE_DIRECTORIES, which makes cmake complain that
+# those properties contain paths in the source folder. Thus, we update
+# the properties to only include these eigen paths in the
+# "BUILD_INTERFACE" (not "INSTALL").
 if(EIGEN3_INCLUDE_DIR MATCHES "^${CMAKE_SOURCE_DIR}.*")
   set(_targets opengv)
   if(TARGET pangolin)
     list(APPEND _targets pangolin)
   endif()
   foreach(_target ${_targets})
-    get_target_property(_include_dirs ${_target} INTERFACE_INCLUDE_DIRECTORIES)
-    set(_include_dirs_new "")
-    foreach(_dir IN LISTS _include_dirs)
-      if(_dir MATCHES ".*/eigen(/unsupported)?$")
-        string(REGEX REPLACE "(^${CMAKE_SOURCE_DIR}.*$)" "$<BUILD_INTERFACE:\\1>" _dir "${_dir}")
+    foreach(_property INTERFACE_INCLUDE_DIRECTORIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES)
+      get_target_property(_include_dirs ${_target} ${_property})
+      if(_include_dirs)
+        set(_include_dirs_new "")
+        foreach(_dir IN LISTS _include_dirs)
+          if(_dir MATCHES ".*/eigen(/unsupported)?$")
+            string(REGEX REPLACE "(^${CMAKE_SOURCE_DIR}.*$)" "$<BUILD_INTERFACE:\\1>" _dir "${_dir}")
+          endif()
+          list(APPEND _include_dirs_new "${_dir}")
+        endforeach()
+        set_target_properties(${_target} PROPERTIES ${_property} "${_include_dirs_new}")
       endif()
-      list(APPEND _include_dirs_new "${_dir}")
     endforeach()
-    set_target_properties(${_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${_include_dirs_new}")
   endforeach()
 endif()
 
