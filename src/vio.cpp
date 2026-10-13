@@ -166,6 +166,10 @@ struct basalt_vio_ui : vis::VIOUIBase {
   size_t max_gui_frames = 10000;
 
   std::ofstream timing_csv{};
+  std::string stats_log_path;   // per-frame tracking stats + full states (offline evaluation)
+  std::ofstream stats_log_csv{};
+  std::ofstream states_log_csv{};
+  thread stats_log_thread;
 
   std::atomic<bool> terminate = false;
 
@@ -258,6 +262,8 @@ struct basalt_vio_ui : vis::VIOUIBase {
     app.add_option("--save-trajectory-fn", trajectory_name, "Name of the saved trajectory (default: trajectory.csv)");
     app.add_option("--save-groundtruth", trajectory_groundtruth, "In addition to trajectory, save also ground truth");
     app.add_option("--save-times", save_times, "Measure and save timing information.");
+    app.add_option("--stats-log", stats_log_path,
+                   "Write per-frame tracking stats to <path> and per-frame states to <path>.states (non-GUI only)");
     app.add_option("--use-imu", use_imu, "Use IMU: visual-inertial vs visual-only pipeline");
     app.add_option("--use-double", use_double, "Use double not float.");
     app.add_option("--deterministic", deterministic, "Make the pipeline output reproducible (some performance impact)");
@@ -334,6 +340,7 @@ struct basalt_vio_ui : vis::VIOUIBase {
       opt_flow->output_queue = &vio->vision_data_queue;
       opt_flow->show_gui = show_gui;
       if (show_gui) vio->out_vis_queue = &out_vis_queue;
+      if (!show_gui && !stats_log_path.empty()) vio->out_vis_queue = &out_vis_queue;
       vio->out_state_queue = &out_state_queue;
       vio->opt_flow_depth_guess_queue = &opt_flow->input_depth_queue;
       vio->opt_flow_state_queue = &opt_flow->input_state_queue;
@@ -361,6 +368,28 @@ struct basalt_vio_ui : vis::VIOUIBase {
     }
 
     log_clear();
+
+    if (!show_gui && !stats_log_path.empty()) {
+      stats_log_csv.open(stats_log_path);
+      stats_log_csv << "t_ns,kp_cam0,kp_cam1,proj_cam0,proj_cam1,num_points,num_kfs\n";
+      states_log_csv.open(stats_log_path + ".states");
+      states_log_csv << "t_ns,px,py,pz,qx,qy,qz,qw,vx,vy,vz,bgx,bgy,bgz,bax,bay,baz,reset\n";
+      stats_log_thread = thread([&]() {
+        basalt::VioVisualizationData::Ptr data;
+        while (true) {
+          out_vis_queue.pop(data);
+          if (!data) break;
+          size_t kp[2] = {0, 0}, pr[2] = {0, 0};
+          if (data->opt_flow_res)
+            for (size_t i = 0; i < 2 && i < data->opt_flow_res->keypoints.size(); i++)
+              kp[i] = data->opt_flow_res->keypoints[i].size();
+          if (data->projections)
+            for (size_t i = 0; i < 2 && i < data->projections->size(); i++) pr[i] = data->projections->at(i).size();
+          stats_log_csv << data->t_ns << "," << kp[0] << "," << kp[1] << "," << pr[0] << "," << pr[1] << ","
+                        << data->points.size() << "," << data->frames.size() << "\n";
+        }
+      });
+    }
 
     if (step_by_step) {
       continue_btn = false;  // Disable automatically feeding next frame
@@ -461,6 +490,16 @@ struct basalt_vio_ui : vis::VIOUIBase {
     if (save_times) timing_csv << data->input_images->stats;  // Write CSV line
 
     int64_t t_ns = data->t_ns;
+
+    if (states_log_csv.is_open()) {
+      const auto& T = data->T_w_i;
+      const auto& q = T.unit_quaternion();
+      states_log_csv << "{},{:.9f},{:.9f},{:.9f},{:.9f},{:.9f},{:.9f},{:.9f},{:.6f},{:.6f},{:.6f},{:.7f},{:.7f},{:.7f},{:.6f},{:.6f},{:.6f},{}\n"_format(
+          t_ns, T.translation().x(), T.translation().y(), T.translation().z(), q.x(), q.y(), q.z(), q.w(),
+          data->vel_w_i.x(), data->vel_w_i.y(), data->vel_w_i.z(), data->bias_gyro.x(), data->bias_gyro.y(),
+          data->bias_gyro.z(), data->bias_accel.x(), data->bias_accel.y(), data->bias_accel.z(),
+          int(data->input_images ? data->input_images->state_reset : 0));
+    }
 
     Sophus::SE3d T_w_i = data->T_w_i;
     Eigen::Vector3d pos_w_i = T_w_i.translation();
@@ -739,6 +778,7 @@ struct basalt_vio_ui : vis::VIOUIBase {
 
     // join other threads
     if (show_gui) vis_thread.join();
+    if (stats_log_thread.joinable()) stats_log_thread.join();
     if (!deterministic) state_consumer_thread.join();
     if (print_queue) queues_printer_thread.join();
 
