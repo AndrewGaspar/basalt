@@ -156,6 +156,7 @@ struct Tracker::Implementation {
   vector<vit::ImuCalibration> added_imu_calibs{};
 
   OpticalFlowInput::Ptr partial_frame;
+  uint64_t imu_dropped = 0;
 
   explicit Implementation(const vit::Config *config) : show_gui(config->show_ui), cam_count(config->cam_count) {
     cout << "Basalt with cam_count=" << cam_count << ", show_gui=" << show_gui << "\n";
@@ -427,8 +428,10 @@ struct Tracker::Implementation {
   void stop() {
     running = false;
     image_data_queue->push(nullptr);
-    imu_data_queue->push(nullptr);
-    opt_flow_ptr->input_imu_queue.push(nullptr);
+    // Make room if the pipeline stalled with full IMU queues, the end marker must get in.
+    ImuData<double>::Ptr discard;
+    while (!imu_data_queue->try_push(nullptr)) imu_data_queue->try_pop(discard);
+    while (!opt_flow_ptr->input_imu_queue.try_push(nullptr)) opt_flow_ptr->input_imu_queue.try_pop(discard);
 
     if (print_queue) queues_printer_thread.join();
     if (!deterministic) state_consumer_thread.join();
@@ -453,8 +456,16 @@ struct Tracker::Implementation {
     data->t_ns = s->timestamp;
     data->accel = {s->ax, s->ay, s->az};
     data->gyro = {s->wx, s->wy, s->wz};
-    imu_data_queue->push(data);
-    opt_flow_ptr->input_imu_queue.push(data);
+    // Never block the caller (a driver's sensor/IMU thread): when the pipeline stalls (no frames for
+    // seconds) the bounded queues fill up, a blocking push then wedges the caller and stop().
+    // Dropping samples in that situation loses nothing that tracking could still use.
+    bool pushed_vio = imu_data_queue->try_push(data);
+    bool pushed_of = opt_flow_ptr->input_imu_queue.try_push(data);
+    if (!pushed_vio || !pushed_of) {
+      if (imu_dropped++ % 1000 == 0) {
+        std::cerr << "Basalt: IMU queue full (pipeline stalled?), dropped " << imu_dropped << " samples\n";
+      }
+    }
   }
 
   void push_frame(const vit::ImgSample *s) {
