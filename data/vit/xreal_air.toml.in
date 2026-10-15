@@ -12,7 +12,7 @@ cam-calib=""
 
 # Pipeline settings: EuRoC defaults with a denser feature detection grid (35 px), which cut the
 # initialisation jitter from 8.7 to 1.9 mm on the living-room recordings.
-config-path="@CONFIG_FILE_INSTALL_DESTINATION@/xreal_air_config.json"
+config-path="@CMAKE_INSTALL_FULL_DATADIR@/basalt/xreal_air_config.json"
 
 # Path to folder where marginalization data will be stored.
 marg-data=""
