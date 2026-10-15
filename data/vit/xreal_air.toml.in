@@ -1,0 +1,30 @@
+# Options for the Basalt SLAM Tracker, XREAL Air 2 Ultra through Monado's xreal_air driver.
+#
+# The camera and IMU calibration is NOT in this file: the driver converts the glasses' own
+# factory calibration (KB4 fit of the fisheye624 cameras, JPL -> Hamilton extrinsics, IMU noise)
+# and hands it over through the VIT calibration functions. Only the pipeline settings live here.
+
+# Show GUI
+show-gui=0
+
+# Empty: the calibration comes from the driver.
+cam-calib=""
+
+# Pipeline settings: EuRoC defaults with a denser feature detection grid (35 px), which cut the
+# initialisation jitter from 8.7 to 1.9 mm on the living-room recordings.
+config-path="@CONFIG_FILE_INSTALL_DESTINATION@/xreal_air_config.json"
+
+# Path to folder where marginalization data will be stored.
+marg-data=""
+
+# Poll and print for queue sizes.
+print-queue=0
+
+# Whether to use a double or single precision pipeline.
+use-double=0
+
+# Whether to use a pipeline that produces repeatable outputs
+deterministic=0
+
+# Number of threads. 0 for automatic. Measured: no speedup beyond 1 on the recordings.
+num-threads=1

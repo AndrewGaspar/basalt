@@ -561,10 +561,11 @@ if(BASALT_BUILD_SHARED_LIBRARY_ONLY)
   install(TARGETS basalt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
           ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   )
-  set(CONFIG_FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/msd/msdmo_config.json"
-                   "${CMAKE_CURRENT_SOURCE_DIR}/data/msd/msdmo_calib.json"
+  set(CONFIG_FILES
+      "${CMAKE_CURRENT_SOURCE_DIR}/data/msd/msdmo_config.json" "${CMAKE_CURRENT_SOURCE_DIR}/data/msd/msdmo_calib.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/data/xreal/xreal_air_config.json"
   )
-  set(UNIFIED_CONFIG_FILES msdmo.toml)
+  set(UNIFIED_CONFIG_FILES msdmo.toml xreal_air.toml)
 
 else()
 

@@ -168,6 +168,8 @@ struct Tracker::Implementation {
     ASSERT(cam_count > 1, "Basalt doesn't support running with %d cameras", cam_count);
     calib_data_ready.cam.resize(cam_count, false);
 
+    monado_out_state_queue.set_capacity(32);
+
     if (config->file == nullptr) {
       // For the pipeline to work now, the user will need to use add_cam/imu_calibration
       return;
@@ -176,9 +178,14 @@ struct Tracker::Implementation {
     load_unified_config(config->file);
 
     vio_config.load(config_path);
-    load_calibration_data(cam_calib_path);
 
-    monado_out_state_queue.set_capacity(32);
+    // An empty cam-calib means the calibration comes from the caller through
+    // add_camera_calibration / add_imu_calibration, only the pipeline settings come from the file.
+    if (!cam_calib_path.empty()) {
+      load_calibration_data(cam_calib_path);
+    } else {
+      cout << "No cam-calib in the config file, expecting the calibration from the caller\n";
+    }
   }
 
   static vit::Result get_supported_extensions(vit::TrackerExtensionSet *out_exts) {
@@ -215,7 +222,9 @@ struct Tracker::Implementation {
     CLI::App app{"Options for the Basalt SLAM Tracker"};
 
     app.add_option("--show-gui", show_gui, "Show GUI");
-    app.add_option("--cam-calib", cam_calib_path, "Ground-truth camera calibration used for simulation.")->required();
+    app.add_option("--cam-calib", cam_calib_path,
+                   "Camera calibration. Optional: when empty, the caller provides it through the VIT calibration "
+                   "functions.");
     app.add_option("--config-path", config_path, "Path to config file.")->required();
     app.add_option("--marg-data", marg_data_path, "Path to folder where marginalization data will be stored.");
     app.add_option("--print-queue", print_queue, "Poll and print for queue sizes.");
