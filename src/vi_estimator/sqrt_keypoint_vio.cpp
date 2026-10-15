@@ -113,7 +113,8 @@ SqrtKeypointVioEstimator<Scalar_>::SqrtKeypointVioEstimator(const Eigen::Vector3
   opt_started = false;
 
   vision_data_queue.set_capacity(10);
-  imu_data_queue.set_capacity(2000);  // was 300: camera gaps > 300 ms deadlocked feed_imu vs optical flow
+  imu_data_queue.set_capacity(10000);  // was 300: camera gaps > 300 ms deadlocked feed_imu vs optical flow;
+                                       // 10 s so live camera stalls lose no IMU data (VIT drops beyond)
 }
 
 template <class Scalar>
