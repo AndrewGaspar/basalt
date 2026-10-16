@@ -146,6 +146,7 @@ struct Tracker::Implementation {
 
   // Threads
   thread state_consumer_thread;
+  double imu_frequency = -1;  //!< Of the first IMU calibration applied.
   thread queues_printer_thread;
 
   // External Queues
@@ -321,13 +322,14 @@ struct Tracker::Implementation {
     int i = imu_calib.imu_index;
     ASSERT(i == 0, "More than one IMU unsupported (%d)", i);
 
-    static double frequency = -1;
-    if (frequency == -1) {
-      frequency = imu_calib.frequency;
-      calib.imu_update_rate = frequency;
+    // Per tracker, not a function static: a second tracker in the same process (a driver restarting
+    // its tracker) found the first one's frequency there and exit()ed on the mismatch.
+    if (imu_frequency == -1) {
+      imu_frequency = imu_calib.frequency;
+      calib.imu_update_rate = imu_frequency;
     } else {
-      ASSERT(frequency == calib.imu_update_rate, "Unsupported mix of IMU frequencies %lf != %lf", frequency,
-             calib.imu_update_rate);
+      ASSERT(imu_frequency == calib.imu_update_rate, "Unsupported mix of IMU frequencies %lf != %lf",
+             imu_frequency, calib.imu_update_rate);
     }
 
     // Accelerometer calibration
@@ -722,6 +724,12 @@ vit::Result Pose::get_features(uint32_t camera_index, vit::PoseFeatures *out_fea
 }
 
 }  // namespace basalt::vit_implementation
+
+/*!
+ * Not part of the VIT interface: tells a caller (dlsym) that this library can create a new tracker
+ * after destroying an earlier one in the same process. Libraries without it exit() on the second one.
+ */
+extern "C" int basalt_vit_restartable(void) { return 1; }
 
 vit_result_t vit_tracker_create(const vit_config_t *config, vit_tracker_t **out_tracker) {
   try {
