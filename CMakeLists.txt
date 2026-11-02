@@ -372,6 +372,7 @@ target_sources(
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/linearization_base.hpp
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/linearization_rel_sc.hpp
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/frame_to_frame_optical_flow.h
+         ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/klt8_lk.h
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/multiscale_frame_to_frame_optical_flow.h
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/optical_flow.h
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/patch.h
@@ -413,6 +414,7 @@ target_sources(
           ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_abs_sc.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_base.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_rel_sc.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/optical_flow/klt8_lk.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/optical_flow/optical_flow.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/keypoints.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/system_utils.cpp
