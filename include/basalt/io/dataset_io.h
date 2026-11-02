@@ -70,6 +70,7 @@ struct ImageData {
   ImageData() : exposure(0) {}
 
   ManagedImage<uint16_t>::Ptr img;
+  ManagedImage<uint8_t>::Ptr img8;  //!< Optional 8-bit image, for optical flows that want it (wantsImage8)
   double exposure;
 };
 

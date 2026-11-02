@@ -55,6 +55,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sophus/se3.hpp>
 
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
@@ -508,20 +509,32 @@ struct Tracker::Implementation {
              partial_frame->t_ns, s->timestamp);
     }
 
-    // Forced to use uint16_t here, in place because of cameras with 12-bit grayscale support
-    auto &mimg = partial_frame->img_data[i].img;
-    mimg = make_shared<ManagedImage<uint16_t>>(s->width, s->height);
-
     for (uint32_t j = 0; j < s->mask_count; j++) {
       auto &r = s->masks[j];
       partial_frame->masks[i].masks.emplace_back(r.x, r.y, r.w, r.h);
     }
 
-    // TODO figure out format copy to avoid using a cv::Mat
-    int type = s->format == VIT_IMAGE_FORMAT_L8 ? CV_8UC1 : CV_8UC3;
-    cv::Mat img{(int)s->height, (int)s->width, type, s->data, s->stride};
+    // An optical flow that works on 8-bit images gets 8-bit frames as they are (the UI still needs the 16-bit ones)
+    const bool keep8 = s->format == VIT_IMAGE_FORMAT_L8 && opt_flow_ptr->wantsImage8();
+    if (keep8) {
+      auto &mimg8 = partial_frame->img_data[i].img8;
+      mimg8 = make_shared<ManagedImage<uint8_t>>(s->width, s->height);
+      for (uint32_t y = 0; y < s->height; y++) {
+        std::memcpy(mimg8->RowPtr(y), s->data + size_t(y) * s->stride, s->width);
+      }
+    }
 
-    for (uint32_t j = 0; j < s->width * s->height; j++) { mimg->ptr[j] = img.at<uchar>(j) << 8; }
+    if (!keep8 || show_gui) {
+      // Forced to use uint16_t here, in place because of cameras with 12-bit grayscale support
+      auto &mimg = partial_frame->img_data[i].img;
+      mimg = make_shared<ManagedImage<uint16_t>>(s->width, s->height);
+
+      // TODO figure out format copy to avoid using a cv::Mat
+      int type = s->format == VIT_IMAGE_FORMAT_L8 ? CV_8UC1 : CV_8UC3;
+      cv::Mat img{(int)s->height, (int)s->width, type, s->data, s->stride};
+
+      for (uint32_t j = 0; j < s->width * s->height; j++) { mimg->ptr[j] = img.at<uchar>(j) << 8; }
+    }
 
     if (i == cam_count - 1) {
       partial_frame->addTime("frames_read");

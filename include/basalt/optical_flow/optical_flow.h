@@ -133,6 +133,10 @@ class OpticalFlowBase {
 
   virtual void processingLoop() = 0;
 
+  //! Whether this optical flow works on 8-bit images: it then reads ImageData::img8 when set, and a producer with
+  //! 8-bit frames can fill only that instead of widening them to ImageData::img
+  virtual bool wantsImage8() const { return false; }
+
   void start() { processing_thread.reset(new std::thread(&OpticalFlowBase::processingLoop, this)); }
 
   void maybe_join() {
