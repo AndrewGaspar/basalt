@@ -628,26 +628,46 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
     return new_kpts;
   }
 
-  Masks cam0OverlapCellsMasksForCam(size_t cam_id) const {
-    int x_first = x_start + c / 2;
-    int y_first = y_start + c / 2;
+  //! Masks the cells of cam_id's detection grid whose centre, at depth_guess, projects into cam0
+  Masks cam0OverlapCellsMasksForCam(size_t cam_id) {
+    // The centres' unprojections only depend on the calibration: compute them once per camera
+    if (overlap_cells.size() != getNumCams()) overlap_cells.resize(getNumCams());
+    OverlapCells& oc = overlap_cells.at(cam_id);
+    if (!oc.initialized) {
+      int x_first = x_start + c / 2;
+      int y_first = y_start + c / 2;
 
-    int x_last = x_stop + c / 2;
-    int y_last = y_stop + c / 2;
+      int x_last = x_stop + c / 2;
+      int y_last = y_stop + c / 2;
 
-    Masks masks;
-    for (int y = y_first; y <= y_last; y += c) {
-      for (int x = x_first; x <= x_last; x += c) {
-        Vector2 ci_uv{x, y};
-        Vector2 c0_uv;
-        Scalar _;
-        bool projected = calib.projectBetweenCams(ci_uv, depth_guess, c0_uv, _, cam_id, 0);
-        bool in_bounds = c0_uv.x() >= 0 && c0_uv.x() < w && c0_uv.y() >= 0 && c0_uv.y() < h;
-        bool valid = projected && in_bounds;
-        if (valid) {
-          Rect cell_mask(x - c / 2, y - c / 2, c, c);
-          masks.masks.push_back(cell_mask);
+      for (int y = y_first; y <= y_last; y += c) {
+        for (int x = x_first; x <= x_last; x += c) {
+          Vector2 ci_uv{x, y};
+          Vector4 ci_xyzw;
+          if (!calib.intrinsics[cam_id].unproject(ci_uv, ci_xyzw)) continue;  // Never a valid projection
+          oc.centers.emplace_back(x, y);
+          oc.ci_xyzw.push_back(ci_xyzw);
         }
+      }
+      oc.T_c0_ci = (calib.T_i_c[cam_id].inverse() * calib.T_i_c[0]).inverse();
+      oc.initialized = true;
+    }
+
+    // Same arithmetic as calib.projectBetweenCams(ci_uv, depth_guess, c0_uv, _, cam_id, 0)
+    const Scalar depth = depth_guess;
+    Masks masks;
+    for (size_t k = 0; k < oc.centers.size(); k++) {
+      const auto [x, y] = oc.centers[k];
+      Vector4 ci_xyzw = oc.ci_xyzw[k] * depth;
+      ci_xyzw.w() = 1;
+      Vector4 c0_xyzw = oc.T_c0_ci * ci_xyzw;
+      Vector2 c0_uv;
+      bool projected = calib.intrinsics[0].project(c0_xyzw, c0_uv);
+      bool in_bounds = c0_uv.x() >= 0 && c0_uv.x() < w && c0_uv.y() >= 0 && c0_uv.y() < h;
+      bool valid = projected && in_bounds;
+      if (valid) {
+        Rect cell_mask(x - c / 2, y - c / 2, c, c);
+        masks.masks.push_back(cell_mask);
       }
     }
     return masks;
@@ -778,6 +798,15 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
   mutable Eigen::aligned_vector<Keypoint> scratch_result, scratch_guess;
   Eigen::aligned_vector<Eigen::MatrixXi> cells;  // Number of features in each gridcell
   std::vector<Keypoints> recalls;
+
+  struct OverlapCells {  // Grid cell centres of a camera, unprojected, for cam0OverlapCellsMasksForCam
+    bool initialized = false;
+    std::vector<std::pair<int, int>> centers;  // Pixel coordinates of the centres that unproject
+    Eigen::aligned_vector<Vector4> ci_xyzw;    // Their unprojections
+    SE3 T_c0_ci;
+  };
+  Eigen::aligned_vector<OverlapCells> overlap_cells;
+
   const Vector3d accel_cov;
   const Vector3d gyro_cov;
   const size_t c, w, h, x_start, x_stop, y_start, y_stop;  // Grid properties
