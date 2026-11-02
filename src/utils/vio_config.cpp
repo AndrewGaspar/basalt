@@ -70,6 +70,13 @@ VioConfig::VioConfig() {
   optical_flow_recall_update_patch_viewpoint = false;
   optical_flow_recall_max_patch_dist = 3;
   optical_flow_recall_max_patch_norms = {1.74, 0.96, 0.99, 0.44};
+  optical_flow_klt_window = 8;
+  optical_flow_klt_converged_eps = 0.01;
+  optical_flow_klt_min_eig = 1e-4;
+  optical_flow_klt_max_error = 0;
+  optical_flow_klt_max_points_cell = 0;
+  optical_flow_klt_gain_bias = false;
+  optical_flow_klt_opencv = false;
 
   vio_linearization_type = LinearizationType::ABS_QR;
   vio_sqrt_marg = true;
@@ -293,11 +300,21 @@ void serialize(Archive& ar, basalt::VioConfig& config) {
   ar(CEREAL_NVP(config.mapper_lm_lambda_min));
   ar(CEREAL_NVP(config.mapper_lm_lambda_max));
 
-  // Optional keys (added after the shipped configs): keep their defaults when a config file lacks them.
-  // cereal's JSON search() throws before it moves the iterator, so a miss leaves the archive usable.
-  try {
-    ar(CEREAL_NVP(config.optical_flow_converged_thresh));
-  } catch (const cereal::Exception&) {
-  }
+  // Optional keys (added after the shipped configs): a config file without them keeps the defaults. cereal's JSON
+  // search() throws before it moves the iterator, so a miss leaves the archive usable.
+  auto optional = [&ar](auto&& nvp) {
+    try {
+      ar(nvp);
+    } catch (const cereal::Exception&) {
+    }
+  };
+  optional(CEREAL_NVP(config.optical_flow_klt_window));
+  optional(CEREAL_NVP(config.optical_flow_klt_converged_eps));
+  optional(CEREAL_NVP(config.optical_flow_klt_min_eig));
+  optional(CEREAL_NVP(config.optical_flow_klt_max_error));
+  optional(CEREAL_NVP(config.optical_flow_klt_max_points_cell));
+  optional(CEREAL_NVP(config.optical_flow_klt_gain_bias));
+  optional(CEREAL_NVP(config.optical_flow_klt_opencv));
+  optional(CEREAL_NVP(config.optical_flow_converged_thresh));
 }
 }  // namespace cereal

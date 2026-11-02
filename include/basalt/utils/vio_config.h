@@ -74,6 +74,15 @@ struct VioConfig {
   float optical_flow_recall_max_patch_dist;                // Maximum distance in % of width to accept a recall, or 0
   std::vector<float> optical_flow_recall_max_patch_norms;  // Maximum patch residual norm to accept a recall
 
+  // optical_flow_type "klt8" (8-bit pyramidal Lucas-Kanade). Optional keys: a config without them keeps the defaults.
+  int optical_flow_klt_window;              // Side of the square LK window in pixels (odd)
+  float optical_flow_klt_converged_eps;     // Stop iterating on a level once the update is below this (pixels)
+  float optical_flow_klt_min_eig;           // Reject a point whose window's min. eigenvalue (normalised) is below this
+  float optical_flow_klt_max_error;         // Reject a track whose final mean abs. intensity difference is above, or 0
+  int optical_flow_klt_max_points_cell;     // Keep at most this many tracked points per grid cell (oldest first), or 0
+  bool optical_flow_klt_gain_bias;          // Fit a gain and bias between the LK windows (exposure changes)
+  bool optical_flow_klt_opencv;             // Use OpenCV's calcOpticalFlowPyrLK (no gain/bias) instead of klt8::trackLK
+
   LinearizationType vio_linearization_type;
   bool vio_sqrt_marg;
 

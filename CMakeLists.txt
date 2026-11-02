@@ -304,9 +304,9 @@ if(TBB_INTERFACE_VERSION LESS 11004)
 endif()
 
 # NOTE: not specifying version, since 2, 3 or 4 is fine
-find_package(OpenCV QUIET COMPONENTS core imgproc calib3d highgui)
+find_package(OpenCV QUIET COMPONENTS core imgproc calib3d highgui video)
 if(NOT OpenCV_FOUND)
-  find_package(OpenCV REQUIRED COMPONENTS core imgproc calib geometry highgui)
+  find_package(OpenCV REQUIRED COMPONENTS core imgproc calib geometry highgui video)
 endif()
 message(STATUS "Found OpenCV ${OpenCV_VERSION} headers in: ${OpenCV_INCLUDE_DIRS}")
 message(STATUS "Found OpenCV_LIBS: ${OpenCV_LIBS}")
@@ -373,6 +373,7 @@ target_sources(
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/linearization/linearization_rel_sc.hpp
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/frame_to_frame_optical_flow.h
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/klt8_lk.h
+         ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/klt8_optical_flow.h
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/multiscale_frame_to_frame_optical_flow.h
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/optical_flow.h
          ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/patch.h
@@ -415,6 +416,7 @@ target_sources(
           ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_base.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_rel_sc.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/optical_flow/klt8_lk.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/optical_flow/klt8_optical_flow.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/optical_flow/optical_flow.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/keypoints.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/system_utils.cpp

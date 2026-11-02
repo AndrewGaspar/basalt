@@ -36,6 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/optical_flow/optical_flow.h>
 
 #include <basalt/optical_flow/frame_to_frame_optical_flow.h>
+#include <basalt/optical_flow/klt8_optical_flow.h>
 #include <basalt/optical_flow/multiscale_frame_to_frame_optical_flow.h>
 #include <basalt/optical_flow/patch_optical_flow.h>
 
@@ -90,6 +91,12 @@ OpticalFlowBase::Ptr OpticalFlowFactory::getOpticalFlow(const VioConfig& config,
         std::cerr << "config.optical_flow_pattern " << config.optical_flow_pattern << " is not supported." << std::endl;
         std::abort();
     }
+  }
+  if (config.optical_flow_type == "klt8") res.reset(new Klt8OpticalFlow(config, cam));
+
+  if (!res) {
+    std::cerr << "config.optical_flow_type " << config.optical_flow_type << " is not supported." << std::endl;
+    std::abort();
   }
   return res;
 }
