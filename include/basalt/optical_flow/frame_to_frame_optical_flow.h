@@ -305,9 +305,10 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
                    const Masks& masks1, const Masks& masks2, const SE3& T_c1_c2, size_t cam1, size_t cam2) const {
     size_t num_points = keypoint_map_1.size();
 
-    std::vector<KeypointId> ids;
-    Eigen::aligned_vector<Keypoint> init_vec;
-
+    std::vector<KeypointId>& ids = scratch_ids;
+    Eigen::aligned_vector<Keypoint>& init_vec = scratch_init;
+    ids.clear();
+    init_vec.clear();
     ids.reserve(num_points);
     init_vec.reserve(num_points);
 
@@ -316,7 +317,17 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
       init_vec.push_back(affine);
     }
 
-    tbb::concurrent_unordered_map<KeypointId, Keypoint, std::hash<KeypointId>> result, guesses_tbb;
+    // Per-point outputs, merged into the maps after the parallel loop (ids are in ascending order).
+    Eigen::aligned_vector<Keypoint>& result = scratch_result;
+    Eigen::aligned_vector<Keypoint>& guess = scratch_guess;
+    std::vector<uint8_t>& accepted = scratch_accepted;
+    std::vector<uint8_t>& guessed = scratch_guessed;
+    result.resize(num_points);
+    accepted.assign(num_points, 0);
+    if (show_gui) {
+      guess.resize(num_points);
+      guessed.assign(num_points, 0);
+    }
 
     bool tracking = cam1 == cam2;
     bool matching = cam1 != cam2;
@@ -327,8 +338,6 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
 
     auto compute_func = [&](const tbb::blocked_range<size_t>& range) {
       for (size_t r = range.begin(); r != range.end(); ++r) {
-        const KeypointId id = ids[r];
-
         const Eigen::AffineCompact2f& transform_1 = init_vec[r];
         Eigen::AffineCompact2f transform_2 = transform_1;
 
@@ -350,7 +359,10 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
 
         t2 -= off;  // This modifies transform_2
 
-        if (show_gui) { guesses_tbb[id] = transform_2; }
+        if (show_gui) {
+          guess[r] = transform_2;
+          guessed[r] = 1;
+        }
 
         valid = t2(0) >= 0 && t2(1) >= 0 && t2(0) < w && t2(1) < h;
         if (!valid) continue;
@@ -370,7 +382,10 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
 
         Scalar dist2 = (t1 - t1_recovered).squaredNorm();
 
-        if (dist2 < config.optical_flow_max_recovered_dist2) { result[id] = transform_2; }
+        if (dist2 < config.optical_flow_max_recovered_dist2) {
+          result[r] = transform_2;
+          accepted[r] = 1;
+        }
       }
     };
 
@@ -378,9 +393,11 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
     tbb::parallel_for(range, compute_func);
 
     keypoint_map_2.clear();
-    keypoint_map_2.insert(result.begin(), result.end());
     guesses.clear();
-    guesses.insert(guesses_tbb.begin(), guesses_tbb.end());
+    for (size_t r = 0; r < num_points; r++) {
+      if (show_gui && guessed[r]) guesses.emplace_hint(guesses.end(), ids[r], guess[r]);
+      if (accepted[r]) keypoint_map_2.emplace_hint(keypoint_map_2.end(), ids[r], result[r]);
+    }
   }
 
   inline bool trackPoint(const ManagedImagePyr<uint16_t>& old_pyr, const ManagedImagePyr<uint16_t>& pyr,
@@ -754,6 +771,11 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
  private:
   Eigen::aligned_unordered_map<KeypointId, Eigen::aligned_vector<PatchT>> patches;
   std::vector<PyramidBuilder> pyr_builders;  // one per camera (they keep scratch rows)
+  // trackPoints scratch, kept to reuse the allocations
+  mutable std::vector<KeypointId> scratch_ids;
+  mutable Eigen::aligned_vector<Keypoint> scratch_init;
+  mutable std::vector<uint8_t> scratch_accepted, scratch_guessed;
+  mutable Eigen::aligned_vector<Keypoint> scratch_result, scratch_guess;
   Eigen::aligned_vector<Eigen::MatrixXi> cells;  // Number of features in each gridcell
   std::vector<Keypoints> recalls;
   const Vector3d accel_cov;
