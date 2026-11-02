@@ -34,6 +34,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <algorithm>
+#include <cstring>
+#include <limits>
 #include <unordered_set>
 
 #include <basalt/utils/build_config.h>
@@ -138,6 +140,128 @@ void detectKeypointsMapping(const basalt::Image<const uint16_t>& img_raw, Keypoi
   }
 }
 
+// FAST-9 on the 16-pixel circle of radius 3, for one grid cell and every threshold at once.
+//
+// For each pixel at least 3 px inside the cell, with d_k = centre - circle pixel k, let A (B) be the largest (smallest)
+// min (max) of d over the 16 arcs of 9 contiguous circle pixels, and score = max(A, -B) - 1. This is the response
+// cv::FAST gives a corner (cornerScore<16>), and the pixel is a FAST corner at threshold t iff score >= t. cv::FAST's
+// non-maximum suppression compares a corner with the scores of the neighbours (inside that region) that are corners at
+// t, and 0 for the others, so a corner at t survives it iff its score is greater than the scores of all its
+// neighbours. Hence the corners cv::FAST(cell, t) returns, in its raster order, are the survivors with score >= t.
+class CellFast {
+ public:
+  struct Corner {
+    int x, y, score;
+  };
+
+  explicit CellFast(int size)
+      : n(size),
+        m(std::max(size - 6, 0)),
+        mpad((m + BLOCK - 1) / BLOCK * BLOCK),
+        stride(mpad + 6),
+        sstride(mpad + 2),
+        pix(size_t(n) * stride, 0),
+        scores(size_t(m + 2) * sstride, 0) {}
+
+  //! Scores the n x n cell at (x, y) of img (8-bit values img >> 8) and collects the non-maximum-suppression
+  //! survivors with score >= min_score (in [0, 255]) in raster order.
+  void detect(const basalt::Image<const uint16_t>& img, size_t x, size_t y, int min_score) {
+    for (int r = 0; r < n; r++) {
+      const uint16_t* __restrict src = img.RowPtr(y + r) + x;
+      uint8_t* __restrict dst = &pix[size_t(r) * stride];
+      for (int c = 0; c < n; c++) dst[c] = src[c] >> 8;
+    }
+
+    // Scores of the m x m evaluated region, surrounded by zeros. Negative scores are stored as 0, like cv::FAST
+    // stores non-corners (this only matters for threshold 0).
+    for (int r = 0; r < m; r++) {
+      uint8_t* out = &scores[size_t(r + 1) * sstride + 1];
+      for (int j0 = 0; j0 < mpad; j0 += BLOCK) scoreBlock(&pix[size_t(r + 3) * stride + 3 + j0], out + j0);
+      for (int j = m; j < mpad; j++) out[j] = 0;  // Lanes past the region
+    }
+
+    corners_.clear();
+    for (int r = 1; r <= m; r++) {
+      const uint8_t* p = &scores[size_t(r - 1) * sstride];
+      const uint8_t* q = p + sstride;
+      const uint8_t* u = q + sstride;
+      for (int j0 = 0; j0 < mpad; j0 += BLOCK) {
+        uint8_t keep[BLOCK];
+        for (int l = 0; l < BLOCK; l++) {
+          const int c = j0 + l + 1;
+          const uint8_t v = q[c];
+          // Bitwise, not short-circuit, so it vectorizes
+          keep[l] = (v >= min_score) & (v > p[c - 1]) & (v > p[c]) & (v > p[c + 1]) & (v > q[c - 1]) & (v > q[c + 1]) &
+                    (v > u[c - 1]) & (v > u[c]) & (v > u[c + 1]);
+        }
+        // Lanes past the region are 0. Skip 8 lanes at a time when none is set.
+        for (int l0 = 0; l0 < BLOCK; l0 += 8) {
+          uint64_t any;
+          std::memcpy(&any, keep + l0, 8);
+          if (any == 0) continue;
+          for (int l = l0; l < l0 + 8; l++)
+            if (keep[l]) corners_.push_back({j0 + l + 3, r - 1 + 3, q[j0 + l + 1]});
+        }
+      }
+    }
+  }
+
+  const std::vector<Corner>& corners() const { return corners_; }
+
+ private:
+  static constexpr int BLOCK = 32;
+
+  // Circle of radius 3 around the centre, in order around it (as in cv::FAST, starting anywhere would do)
+  static constexpr int CX[16] = {0, 1, 2, 3, 3, 3, 2, 1, 0, -1, -2, -3, -3, -3, -2, -1};
+  static constexpr int CY[16] = {3, 3, 2, 1, 0, -1, -2, -3, -3, -3, -2, -1, 0, 1, 2, 3};
+
+  //! Scores (clamped to >= 0) of BLOCK consecutive pixels starting at c. In 8 bits: with dark = max(d, 0) and
+  //! bright = max(-d, 0), max over arcs of the min of dark (bright) is max(A, 0) (max(-B, 0)), which gives the
+  //! clamped score. Fixed-size loops over the block, which compilers vectorize.
+  void scoreBlock(const uint8_t* c, uint8_t* score) const {
+    uint8_t dk[24][BLOCK], br[24][BLOCK];
+    for (int k = 0; k < 16; k++) {
+      const uint8_t* q = c + CY[k] * stride + CX[k];
+      for (int l = 0; l < BLOCK; l++) {
+        dk[k][l] = c[l] > q[l] ? c[l] - q[l] : 0;
+        br[k][l] = q[l] > c[l] ? q[l] - c[l] : 0;
+      }
+    }
+    for (int k = 16; k < 24; k++)
+      for (int l = 0; l < BLOCK; l++) {
+        dk[k][l] = dk[k - 16][l];
+        br[k][l] = br[k - 16][l];
+      }
+
+    // Min over the arcs [k, k + 8], by doubling: 2, 4, 8, then 9 elements
+    uint8_t dk2[23][BLOCK], br2[23][BLOCK];
+    for (int k = 0; k < 23; k++)
+      for (int l = 0; l < BLOCK; l++) {
+        dk2[k][l] = std::min(dk[k][l], dk[k + 1][l]);
+        br2[k][l] = std::min(br[k][l], br[k + 1][l]);
+      }
+    uint8_t dk4[21][BLOCK], br4[21][BLOCK];
+    for (int k = 0; k < 21; k++)
+      for (int l = 0; l < BLOCK; l++) {
+        dk4[k][l] = std::min(dk2[k][l], dk2[k + 2][l]);
+        br4[k][l] = std::min(br2[k][l], br2[k + 2][l]);
+      }
+    uint8_t s[BLOCK] = {};
+    for (int k = 0; k < 16; k++)
+      for (int l = 0; l < BLOCK; l++) {
+        const uint8_t a = std::min(std::min(dk4[k][l], dk4[k + 4][l]), dk[k + 8][l]);
+        const uint8_t b = std::min(std::min(br4[k][l], br4[k + 4][l]), br[k + 8][l]);
+        s[l] = std::max(s[l], std::max(a, b));
+      }
+    for (int l = 0; l < BLOCK; l++) score[l] = s[l] > 0 ? s[l] - 1 : 0;
+  }
+
+  const int n, m, mpad, stride, sstride;
+  std::vector<uint8_t> pix;
+  std::vector<uint8_t> scores;
+  std::vector<Corner> corners_;
+};
+
 void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, KeypointsData& kd,
                               const Eigen::MatrixXi& cells, int PATCH_SIZE, int num_points_cell, int min_threshold,
                               int max_threshold, float safe_radius, const Masks& masks) {
@@ -152,8 +276,7 @@ void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, Keyp
   const size_t y_start = (img_raw.h % PATCH_SIZE) / 2;
   const size_t y_stop = y_start + PATCH_SIZE * (img_raw.h / PATCH_SIZE - 1);
 
-  // Buffers reused across cells
-  cv::Mat subImg(PATCH_SIZE, PATCH_SIZE, CV_8U);
+  CellFast fast(PATCH_SIZE);
   std::vector<cv::KeyPoint> points;     // Corners at the current threshold
   std::vector<const Rect*> cell_masks;  // Masks that can contain a corner of the current cell
 
@@ -178,11 +301,8 @@ void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, Keyp
       }
       if (covered) continue;
 
-      for (int yy = 0; yy < PATCH_SIZE; yy++) {
-        const uint16_t* src = img_raw.RowPtr(y + yy) + x;
-        uchar* dst = subImg.ptr(yy);
-        for (int xx = 0; xx < PATCH_SIZE; xx++) dst[xx] = src[xx] >> 8;
-      }
+      // All the corners cv::FAST would find at any threshold >= min_threshold (clamped to [0, 255] like cv::FAST)
+      fast.detect(img_raw, x, y, std::clamp(min_threshold, 0, 255));
 
       // A corner is kept unless it is outside the safe radius, masked, or too close to the image border
       auto accept = [&](const cv::KeyPoint& kp) {
@@ -201,11 +321,12 @@ void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, Keyp
       int points_added = 0;
       int threshold = max_threshold;
 
-      // NOTE: emulating the lower thresholds from one FAST pass at min_threshold gives the same corners, but is
-      // slower: FAST at a low threshold scores many more candidates than the higher passes it would replace.
       while (points_added < num_points_cell && threshold >= min_threshold) {
+        // What cv::FAST(cell, threshold) returns
+        const int t = std::clamp(threshold, 0, 255);
         points.clear();
-        cv::FAST(subImg, points, threshold);
+        for (const CellFast::Corner& c : fast.corners())
+          if (c.score >= t) points.emplace_back(float(c.x), float(c.y), 7.f, -1.f, float(c.score));
 
         std::sort(points.begin(), points.end(),
                   [](const cv::KeyPoint& a, const cv::KeyPoint& b) -> bool { return a.response > b.response; });
