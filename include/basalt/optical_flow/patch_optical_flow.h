@@ -380,16 +380,11 @@ class PatchOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
     bool patch_valid = true;
 
     for (int iteration = 0; patch_valid && iteration < config.optical_flow_max_iterations; iteration++) {
-      typename PatchT::VectorP res;
+      Vector3 inc;
 
-      typename PatchT::Matrix2P transformed_pat = transform.linear().matrix() * PatchT::pattern2;
-      transformed_pat.colwise() += transform.translation();
-
-      patch_valid &= dp.residual(img_2, transformed_pat, res);
+      patch_valid &= dp.computeIncrement(img_2, transform, inc);
 
       if (patch_valid) {
-        const Vector3 inc = -dp.H_se2_inv_J_se2_T * res;
-
         // avoid NaN in increment (leads to SE2::exp crashing)
         patch_valid &= inc.array().isFinite().all();
 
@@ -397,7 +392,7 @@ class PatchOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
         patch_valid &= inc.template lpNorm<Eigen::Infinity>() < 1e6;
 
         if (patch_valid) {
-          transform *= SE2::exp(inc).matrix();
+          PatchT::applyIncrement(transform, inc);
 
           const int filter_margin = 2;
 
