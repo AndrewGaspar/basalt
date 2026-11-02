@@ -36,6 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 #include <unordered_set>
 
 #include <basalt/utils/build_config.h>
@@ -163,13 +164,16 @@ class CellFast {
         pix(size_t(n) * stride, 0),
         scores(size_t(m + 2) * sstride, 0) {}
 
-  //! Scores the n x n cell at (x, y) of img (8-bit values img >> 8) and collects the non-maximum-suppression
-  //! survivors with score >= min_score (in [0, 255]) in raster order.
-  void detect(const basalt::Image<const uint16_t>& img, size_t x, size_t y, int min_score) {
+  //! Scores the n x n cell at (x, y) of img (8-bit values: img >> 8 for 16-bit images) and collects the
+  //! non-maximum-suppression survivors with score >= min_score (in [0, 255]) in raster order.
+  template <typename T>
+  void detect(const basalt::Image<const T>& img, size_t x, size_t y, int min_score) {
+    static_assert(std::is_same_v<T, uint16_t> || std::is_same_v<T, uint8_t>);
+    constexpr int shift = std::is_same_v<T, uint16_t> ? 8 : 0;
     for (int r = 0; r < n; r++) {
-      const uint16_t* __restrict src = img.RowPtr(y + r) + x;
+      const T* __restrict src = img.RowPtr(y + r) + x;
       uint8_t* __restrict dst = &pix[size_t(r) * stride];
-      for (int c = 0; c < n; c++) dst[c] = src[c] >> 8;
+      for (int c = 0; c < n; c++) dst[c] = src[c] >> shift;
     }
 
     // Scores of the m x m evaluated region, surrounded by zeros. Negative scores are stored as 0, like cv::FAST
@@ -262,9 +266,10 @@ class CellFast {
   std::vector<Corner> corners_;
 };
 
-void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, KeypointsData& kd,
-                              const Eigen::MatrixXi& cells, int PATCH_SIZE, int num_points_cell, int min_threshold,
-                              int max_threshold, float safe_radius, const Masks& masks) {
+template <typename T>
+static void detectKeypointsWithCellsT(const basalt::Image<const T>& img_raw, KeypointsData& kd,
+                                      const Eigen::MatrixXi& cells, int PATCH_SIZE, int num_points_cell,
+                                      int min_threshold, int max_threshold, float safe_radius, const Masks& masks) {
   kd.corners.clear();
   kd.corner_responses.clear();
   kd.corner_angles.clear();
@@ -342,6 +347,20 @@ void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, Keyp
       }
     }
   }
+}
+
+void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, KeypointsData& kd,
+                              const Eigen::MatrixXi& cells, int PATCH_SIZE, int num_points_cell, int min_threshold,
+                              int max_threshold, float safe_radius, const Masks& masks) {
+  detectKeypointsWithCellsT(img_raw, kd, cells, PATCH_SIZE, num_points_cell, min_threshold, max_threshold, safe_radius,
+                            masks);
+}
+
+void detectKeypointsWithCells(const basalt::Image<const uint8_t>& img_raw, KeypointsData& kd,
+                              const Eigen::MatrixXi& cells, int PATCH_SIZE, int num_points_cell, int min_threshold,
+                              int max_threshold, float safe_radius, const Masks& masks) {
+  detectKeypointsWithCellsT(img_raw, kd, cells, PATCH_SIZE, num_points_cell, min_threshold, max_threshold, safe_radius,
+                            masks);
 }
 
 void detectKeypoints(const basalt::Image<const uint16_t>& img_raw, KeypointsData& kd, int PATCH_SIZE,
