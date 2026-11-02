@@ -50,6 +50,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <basalt/optical_flow/optical_flow.h>
 #include <basalt/optical_flow/patch.h>
+#include <basalt/optical_flow/pyramid.h>
 
 #include <basalt/utils/keypoints.h>
 #include <basalt/vi_estimator/landmark_database.h>
@@ -221,12 +222,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
 
       pyramid.reset(new std::vector<ManagedImagePyr<uint16_t>>);
       pyramid->resize(num_cams);
-
-      tbb::parallel_for(tbb::blocked_range<size_t>(0, num_cams), [&](const tbb::blocked_range<size_t>& r) {
-        for (size_t i = r.begin(); i != r.end(); ++i) {
-          pyramid->at(i).setFromImage(*new_img_vec->img_data[i].img, config.optical_flow_levels);
-        }
-      });
+      buildPyramids(*new_img_vec);
       new_img_vec->addTime("frontend_pyramid_created");
       new_img_vec->addTime("frontend_tracking_ended");
 
@@ -239,15 +235,16 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
     } else {
       t_ns = curr_t_ns;
 
+      // Reuse the pyramid of two frames ago (its buffers) unless someone else still holds it.
+      std::shared_ptr<std::vector<ManagedImagePyr<uint16_t>>> spare = std::move(old_pyramid);
       old_pyramid = pyramid;
 
-      pyramid.reset(new std::vector<ManagedImagePyr<uint16_t>>);
+      if (spare && spare.use_count() == 1)
+        pyramid = std::move(spare);
+      else
+        pyramid.reset(new std::vector<ManagedImagePyr<uint16_t>>);
       pyramid->resize(num_cams);
-      tbb::parallel_for(tbb::blocked_range<size_t>(0, num_cams), [&](const tbb::blocked_range<size_t>& r) {
-        for (size_t i = r.begin(); i != r.end(); ++i) {
-          pyramid->at(i).setFromImage(*new_img_vec->img_data[i].img, config.optical_flow_levels);
-        }
-      });
+      buildPyramids(*new_img_vec);
       new_img_vec->addTime("frontend_pyramid_created");
 
       OpticalFlowResult::Ptr new_transforms;
@@ -290,6 +287,17 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
     }
 
     frame_counter++;
+  }
+
+  /// Same pyramids as ManagedImagePyr::setFromImage, see PyramidBuilder.
+  void buildPyramids(const OpticalFlowInput& in) {
+    const size_t num_cams = getNumCams();
+    pyr_builders.resize(num_cams);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, num_cams), [&](const tbb::blocked_range<size_t>& r) {
+      for (size_t i = r.begin(); i != r.end(); ++i) {
+        pyr_builders[i].build(pyramid->at(i), *in.img_data[i].img, config.optical_flow_levels);
+      }
+    });
   }
 
   void trackPoints(const ManagedImagePyr<uint16_t>& pyr_1, const ManagedImagePyr<uint16_t>& pyr_2,  //
@@ -745,6 +753,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
  private:
   Eigen::aligned_unordered_map<KeypointId, Eigen::aligned_vector<PatchT>> patches;
+  std::vector<PyramidBuilder> pyr_builders;  // one per camera (they keep scratch rows)
   Eigen::aligned_vector<Eigen::MatrixXi> cells;  // Number of features in each gridcell
   std::vector<Keypoints> recalls;
   const Vector3d accel_cov;
