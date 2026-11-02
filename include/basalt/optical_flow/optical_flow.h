@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
@@ -128,11 +129,15 @@ class OpticalFlowBase {
     // patch_coord = PatchT::pattern2.template cast<float>();
     depth_guess = config.optical_flow_matching_default_depth;
   }
-  virtual ~OpticalFlowBase() { processing_thread->join(); }
+  virtual ~OpticalFlowBase() { maybe_join(); }
 
   virtual void processingLoop() = 0;
 
   void start() { processing_thread.reset(new std::thread(&OpticalFlowBase::processingLoop, this)); }
+
+  void maybe_join() {
+    if (processing_thread && processing_thread->joinable()) processing_thread->join();
+  }
 
   virtual inline void drain_input_queues() {
     while (!input_img_queue.empty()) {
@@ -167,6 +172,7 @@ class OpticalFlowBase {
   PoseVelBiasState<double>::Ptr predicted_state = nullptr;
 
   bool first_state_arrived = false;
+  std::atomic<bool> finished = false;  //!< The processing loop has ended (pushed its end marker).
   bool show_gui;  //!< Whether we need to store additional info for the UI
 
   int64_t t_ns = -1;

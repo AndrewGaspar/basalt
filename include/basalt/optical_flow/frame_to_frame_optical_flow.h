@@ -128,6 +128,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
 
       if (img == nullptr) {
         if (output_queue) output_queue->push(nullptr);
+        this->finished = true;
         break;
       }
       img->addTime("frontend_frames_received");

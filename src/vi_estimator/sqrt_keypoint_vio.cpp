@@ -271,6 +271,7 @@ void SqrtKeypointVioEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg_, c
           data->gyro = calib.calib_gyro_bias.getCalibrated(data->gyro);
           // std::cout << "Skipping IMU data.." << std::endl;
         }
+        if (!data) break;  // The IMU end marker (stop): no sample to initialise from.
 
         Vec3 vel_w_i_init;
         vel_w_i_init.setZero();
@@ -319,6 +320,7 @@ void SqrtKeypointVioEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg_, c
           data->accel = calib.calib_accel_bias.getCalibrated(data->accel);
           data->gyro = calib.calib_gyro_bias.getCalibrated(data->gyro);
         }
+        if (!data) break;  // The IMU end marker (stop), the loop below would dereference it.
 
         while (data->t_ns <= curr_frame->t_ns) {
           meas->integrate(*data, accel_cov, gyro_cov);

@@ -429,11 +429,26 @@ struct Tracker::Implementation {
 
   void stop() {
     running = false;
-    image_data_queue->push(nullptr);
-    // Make room if the pipeline stalled with full IMU queues, the end marker must get in.
+    // End markers, never blocking: make room if the pipeline stalled with full queues (what is dropped
+    // would only have been processed for a tracker that is going away).
+    OpticalFlowInput::Ptr img_discard;
+    while (!image_data_queue->try_push(nullptr)) image_data_queue->try_pop(img_discard);
     ImuData<double>::Ptr discard;
     while (!imu_data_queue->try_push(nullptr)) imu_data_queue->try_pop(discard);
     while (!opt_flow_ptr->input_imu_queue.try_push(nullptr)) opt_flow_ptr->input_imu_queue.try_pop(discard);
+
+    // Join the pipeline threads here, while all their queues are alive: the destructor frees the VIO
+    // (and its vision queue) before the optical flow. The VIO ends on its IMU end marker as well as on
+    // the optical flow's, so it can end first, e.g. when the last frames are newer than the last IMU
+    // sample (it waits for IMU data past the frame). The optical flow then still pushes its remaining
+    // frames and its end marker into the VIO's queue: into freed memory if the VIO is destroyed by then
+    // (heap corruption), or blocking forever on the full queue nobody pops (a hang in the destructor).
+    vio->maybe_join();
+    OpticalFlowResult::Ptr res_discard;
+    while (!opt_flow_ptr->finished) {
+      if (!opt_flow_ptr->output_queue->try_pop(res_discard)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    opt_flow_ptr->maybe_join();
 
     if (print_queue) queues_printer_thread.join();
     if (!deterministic) state_consumer_thread.join();
@@ -441,11 +456,6 @@ struct Tracker::Implementation {
 
     // TODO: There is a segfault when closing monado without starting the stream
     // happens in a lambda from keypoint_vio.cpp and ends at line c1alib_bias.hpp:112
-  }
-
-  void finalize() const {
-    // Only the OpticalFlow gets started by initialize, finish it with this
-    image_data_queue->push(nullptr);
   }
 
   void reset() { vio->scheduleResetState(); }
@@ -627,7 +637,6 @@ vit::Result Tracker::start() {
 }
 
 vit::Result Tracker::stop() {
-  impl_->finalize();
   impl_->stop();
   return vit::Result::VIT_SUCCESS;
 }
