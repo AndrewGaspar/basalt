@@ -57,6 +57,9 @@ struct VioConfig {
   float optical_flow_max_recovered_dist2;
   int optical_flow_pattern;
   int optical_flow_max_iterations;
+  // KLT early exit: stop iterating on a pyramid level once the SE(2) update's norm (pixels at that level /
+  // radians) falls below this. 0 (default) = always run optical_flow_max_iterations per level. Optional key.
+  float optical_flow_converged_thresh;
   int optical_flow_levels;
   float optical_flow_epipolar_error;
   int optical_flow_skip_frames;

@@ -430,6 +430,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
   inline bool trackPointAtLevel(const Image<const uint16_t>& img_2, const PatchT& dp, Eigen::AffineCompact2f& transform,
                                 Scalar* out_error = nullptr) const {
     bool patch_valid = true;
+    const Scalar converged_thresh2 = config.optical_flow_converged_thresh * config.optical_flow_converged_thresh;
 
     for (int iteration = 0; patch_valid && iteration < config.optical_flow_max_iterations; iteration++) {
       Vector3 inc;
@@ -449,6 +450,9 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
           const int filter_margin = 2;
 
           patch_valid &= img_2.InBounds(transform.translation(), filter_margin);
+
+          // Converged: the remaining iterations would only move the patch by less than the threshold.
+          if (inc.squaredNorm() < converged_thresh2) break;
         }
       }
     }

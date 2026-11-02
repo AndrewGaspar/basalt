@@ -56,6 +56,7 @@ VioConfig::VioConfig() {
   optical_flow_max_recovered_dist2 = 0.04f;
   optical_flow_pattern = 51;
   optical_flow_max_iterations = 5;
+  optical_flow_converged_thresh = 0;
   optical_flow_levels = 3;
   optical_flow_epipolar_error = 0.005;
   optical_flow_skip_frames = 1;
@@ -291,5 +292,12 @@ void serialize(Archive& ar, basalt::VioConfig& config) {
   ar(CEREAL_NVP(config.mapper_use_lm));
   ar(CEREAL_NVP(config.mapper_lm_lambda_min));
   ar(CEREAL_NVP(config.mapper_lm_lambda_max));
+
+  // Optional keys (added after the shipped configs): keep their defaults when a config file lacks them.
+  // cereal's JSON search() throws before it moves the iterator, so a miss leaves the archive usable.
+  try {
+    ar(CEREAL_NVP(config.optical_flow_converged_thresh));
+  } catch (const cereal::Exception&) {
+  }
 }
 }  // namespace cereal
