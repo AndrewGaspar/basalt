@@ -36,6 +36,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <thread>
 #include <utility>
@@ -187,6 +189,31 @@ class OpticalFlowBase {
 
   OpticalFlowResult::Ptr transforms;
   std::shared_ptr<std::thread> processing_thread;
+
+  //! Debugging aid, BASALT_OF_STATS=1: keypoints per frame and mean track length per camera, printed at the end
+  struct Stats {
+    const bool enabled = std::getenv("BASALT_OF_STATS") != nullptr;
+    size_t frames = 0;
+    std::vector<size_t> obs, tracks;
+
+    //! After a frame's keypoints are final; ids >= first_new_id were created in this frame
+    void frame(const OpticalFlowResult& r, KeypointId first_new_id) {
+      if (!enabled) return;
+      frames++;
+      obs.resize(r.keypoints.size());
+      tracks.resize(r.keypoints.size());
+      for (size_t i = 0; i < r.keypoints.size(); i++) {
+        obs[i] += r.keypoints[i].size();
+        for (auto it = r.keypoints[i].lower_bound(first_new_id); it != r.keypoints[i].end(); ++it) tracks[i]++;
+      }
+    }
+    void print() const {
+      if (!enabled || frames == 0) return;
+      for (size_t i = 0; i < obs.size(); i++)
+        std::fprintf(stderr, "BASALT_OF_STATS cam%zu frames %zu keypoints/frame %.1f tracks %zu mean length %.2f\n", i,
+                     frames, double(obs[i]) / frames, tracks[i], tracks[i] ? double(obs[i]) / tracks[i] : 0.0);
+    }
+  } stats;
   std::shared_ptr<std::vector<ManagedImagePyr<uint16_t>>> old_pyramid;
   std::shared_ptr<std::vector<ManagedImagePyr<uint16_t>>> pyramid;
 };

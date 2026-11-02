@@ -98,6 +98,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
   using OpticalFlowBase::processing_thread;
   using OpticalFlowBase::pyramid;
   using OpticalFlowBase::show_gui;
+  using OpticalFlowBase::stats;
   using OpticalFlowBase::t_ns;
   using OpticalFlowBase::transforms;
 
@@ -128,6 +129,7 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
       input_img_queue.pop(img);
 
       if (img == nullptr) {
+        stats.print();
         if (output_queue) output_queue->push(nullptr);
         this->finished = true;
         break;
@@ -229,8 +231,10 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
       transforms->input_images = new_img_vec;
       transforms->input_images->addTime("frontend_recall_ended");
 
+      const KeypointId first_new_id = last_keypoint_id;
       addPoints();
       filterPoints();
+      stats.frame(*transforms, first_new_id);
       transforms->input_images->addTime("frontend_filter_ended");
     } else {
       t_ns = curr_t_ns;
@@ -276,8 +280,10 @@ class FrameToFrameOpticalFlow final : public OpticalFlowTyped<Scalar, Pattern> {
 
       if (config.optical_flow_recall_enable) recallPoints();
       transforms->input_images->addTime("frontend_recall_ended");
+      const KeypointId first_new_id = last_keypoint_id;
       addPoints();
       filterPoints();
+      stats.frame(*transforms, first_new_id);
       transforms->input_images->addTime("frontend_filter_ended");
     }
 
