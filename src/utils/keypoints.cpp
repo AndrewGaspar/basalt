@@ -33,6 +33,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <algorithm>
 #include <unordered_set>
 
 #include <basalt/utils/build_config.h>
@@ -151,42 +152,66 @@ void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, Keyp
   const size_t y_start = (img_raw.h % PATCH_SIZE) / 2;
   const size_t y_stop = y_start + PATCH_SIZE * (img_raw.h / PATCH_SIZE - 1);
 
+  // Buffers reused across cells
+  cv::Mat subImg(PATCH_SIZE, PATCH_SIZE, CV_8U);
+  std::vector<cv::KeyPoint> points;     // Corners at the current threshold
+  std::vector<const Rect*> cell_masks;  // Masks that can contain a corner of the current cell
+
   for (size_t x = x_start; x <= x_stop; x += PATCH_SIZE) {
     for (size_t y = y_start; y <= y_stop; y += PATCH_SIZE) {
       if (cells((y - y_start) / PATCH_SIZE, (x - x_start) / PATCH_SIZE) >= num_points_cell) continue;
 
-      const basalt::Image<const uint16_t> sub_img_raw = img_raw.SubImage(x, y, PATCH_SIZE, PATCH_SIZE);
-
-      cv::Mat subImg(PATCH_SIZE, PATCH_SIZE, CV_8U);
-
-      for (int y = 0; y < PATCH_SIZE; y++) {
-        uchar* sub_ptr = subImg.ptr(y);
-        for (int x = 0; x < PATCH_SIZE; x++) { sub_ptr[x] = (sub_img_raw(x, y) >> 8); }
+      // Corners of this cell have coordinates in [x, x + PATCH_SIZE) x [y, y + PATCH_SIZE). Skip the cell if a single
+      // mask contains all of that (every corner would be rejected by the mask check below), and otherwise only check
+      // the masks that may contain a point of it. Same comparisons as Rect::inBounds; a NaN mask is kept (never skips).
+      const float cx0 = x, cy0 = y, cx1 = x + PATCH_SIZE, cy1 = y + PATCH_SIZE;
+      bool covered = false;
+      cell_masks.clear();
+      for (const Rect& m : masks.masks) {
+        const float mx1 = m.x + m.w, my1 = m.y + m.h;
+        if (m.x <= cx0 && m.y <= cy0 && mx1 >= cx1 && my1 >= cy1) {
+          covered = true;
+          break;
+        }
+        const bool disjoint = mx1 <= cx0 || m.x >= cx1 || my1 <= cy0 || m.y >= cy1;
+        if (!disjoint) cell_masks.push_back(&m);
       }
+      if (covered) continue;
+
+      for (int yy = 0; yy < PATCH_SIZE; yy++) {
+        const uint16_t* src = img_raw.RowPtr(y + yy) + x;
+        uchar* dst = subImg.ptr(yy);
+        for (int xx = 0; xx < PATCH_SIZE; xx++) dst[xx] = src[xx] >> 8;
+      }
+
+      // A corner is kept unless it is outside the safe radius, masked, or too close to the image border
+      auto accept = [&](const cv::KeyPoint& kp) {
+        float full_x = x + kp.pt.x;
+        float full_y = y + kp.pt.y;
+        if (safe_radius != 0.0) {
+          float dist_to_center = Eigen::Vector2f{full_x - img_raw.w / 2, full_y - img_raw.h / 2}.norm();
+          if (dist_to_center >= safe_radius) return false;
+        }
+        if (std::any_of(cell_masks.cbegin(), cell_masks.cend(),
+                        [&](const Rect* m) { return m->inBounds(full_x, full_y); }))
+          return false;
+        return img_raw.InBounds(full_x, full_y, EDGE_THRESHOLD);
+      };
 
       int points_added = 0;
       int threshold = max_threshold;
 
+      // NOTE: emulating the lower thresholds from one FAST pass at min_threshold gives the same corners, but is
+      // slower: FAST at a low threshold scores many more candidates than the higher passes it would replace.
       while (points_added < num_points_cell && threshold >= min_threshold) {
-        std::vector<cv::KeyPoint> points;
+        points.clear();
         cv::FAST(subImg, points, threshold);
 
         std::sort(points.begin(), points.end(),
                   [](const cv::KeyPoint& a, const cv::KeyPoint& b) -> bool { return a.response > b.response; });
 
-        //        std::cout << "Detected " << points.size() << " points.
-        //        Threshold "
-        //                  << threshold << std::endl;
-
         for (size_t i = 0; i < points.size() && points_added < num_points_cell; i++) {
-          float full_x = x + points[i].pt.x;
-          float full_y = y + points[i].pt.y;
-          float dist_to_center = Eigen::Vector2f{full_x - img_raw.w / 2, full_y - img_raw.h / 2}.norm();
-
-          if (safe_radius != 0.0 && dist_to_center >= safe_radius) continue;
-          if (masks.inBounds(full_x, full_y)) continue;
-          if (!img_raw.InBounds(full_x, full_y, EDGE_THRESHOLD)) continue;
-
+          if (!accept(points[i])) continue;
           kd.corners.emplace_back(x + points[i].pt.x, y + points[i].pt.y);
           kd.corner_responses.emplace_back(points[i].response);
           points_added++;
@@ -196,20 +221,6 @@ void detectKeypointsWithCells(const basalt::Image<const uint16_t>& img_raw, Keyp
       }
     }
   }
-
-  // std::cout << "Total points: " << kd.corners.size() << std::endl;
-
-  //  cv::TermCriteria criteria =
-  //      cv::TermCriteria(CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 40, 0.001);
-  //  cv::Size winSize = cv::Size(5, 5);
-  //  cv::Size zeroZone = cv::Size(-1, -1);
-  //  cv::cornerSubPix(image, points, winSize, zeroZone, criteria);
-
-  //  for (size_t i = 0; i < points.size(); i++) {
-  //    if (img_raw.InBounds(points[i].pt.x, points[i].pt.y, EDGE_THRESHOLD)) {
-  //      kd.corners.emplace_back(points[i].pt.x, points[i].pt.y);
-  //    }
-  //  }
 }
 
 void detectKeypoints(const basalt::Image<const uint16_t>& img_raw, KeypointsData& kd, int PATCH_SIZE,
