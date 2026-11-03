@@ -1,8 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include <basalt/utils/assert.h>
 #include <basalt/utils/ba_utils.h>
@@ -10,6 +13,7 @@
 #include <Eigen/Sparse>
 #include <basalt/linearization/landmark_block.hpp>
 #include <basalt/utils/sophus_utils.hpp>
+
 
 namespace basalt {
 
@@ -62,8 +66,6 @@ class LandmarkBlockAbsDynamic : public LandmarkBlock<Scalar> {
     BASALT_ASSERT(aom.abs_order_map.count(lm.host_kf_id.frame_id) > 0);
 
     for (const auto& [tcid_t, pos] : lm.obs) {
-      size_t i = pose_lin_vec.size();
-
       auto it = relative_pose_lin.find(std::make_pair(lm.host_kf_id, tcid_t));
       BASALT_ASSERT(it != relative_pose_lin.end());
 
@@ -74,9 +76,31 @@ class LandmarkBlockAbsDynamic : public LandmarkBlock<Scalar> {
         pose_lin_vec.push_back(nullptr);
       }
       pose_tcid_vec.push_back(&it->first);
+    }
 
-      res_idx_by_abs_pose_[it->first.first.frame_id].insert(i);   // host
-      res_idx_by_abs_pose_[it->first.second.frame_id].insert(i);  // target
+    // Column ranges of the pose blocks that linearizeLandmark() can write: host and target of every kept
+    // observation. All other pose columns stay zero for the life of the block.
+    std::vector<size_t> pose_cols;
+    pose_cols.reserve(2 * pose_lin_vec.size());
+    for (size_t i = 0; i < pose_lin_vec.size(); i++) {
+      if (!pose_lin_vec[i]) continue;
+      pose_cols.push_back(aom.abs_order_map.at(pose_tcid_vec[i]->first.frame_id).first);
+      pose_cols.push_back(aom.abs_order_map.at(pose_tcid_vec[i]->second.frame_id).first);
+    }
+    std::sort(pose_cols.begin(), pose_cols.end());
+    pose_cols.erase(std::unique(pose_cols.begin(), pose_cols.end()), pose_cols.end());
+    // Ranges start and end on multiples of 4 columns (widened into neighbouring zero columns where needed). With
+    // widths that are multiples of 4, Eigen's kernels take the same packet paths per column as on the full
+    // num_cols-wide rows (num_cols is a multiple of 4): a scalar tail would round differently.
+    pose_col_ranges_.clear();
+    for (size_t c : pose_cols) {
+      const size_t begin = c / 4 * 4;
+      const size_t end = (c + POSE_SIZE + 3) / 4 * 4;
+      if (!pose_col_ranges_.empty() && pose_col_ranges_.back().first + pose_col_ranges_.back().second >= begin) {
+        pose_col_ranges_.back().second = end - pose_col_ranges_.back().first;
+      } else {
+        pose_col_ranges_.emplace_back(begin, end - begin);
+      }
     }
 
     // number of pose-jacobian columns is determined by oam
@@ -94,11 +118,14 @@ class LandmarkBlockAbsDynamic : public LandmarkBlock<Scalar> {
     // number of columns should now be multiple of 4 for good memory alignment
     // TODO: test extending this to 8 --> 32byte alignment for float?
     BASALT_ASSERT(num_cols % 4 == 0);
+    BASALT_ASSERT(pose_col_ranges_.empty() ||
+                  pose_col_ranges_.back().first + pose_col_ranges_.back().second <= lm_idx);
 
     storage.resize(num_rows, num_cols);
+    // linearizeLandmark() and performQR() only touch pose_col_ranges_ and the landmark/residual columns
+    storage.setZero();
 
     damping_rotations.clear();
-    damping_rotations.reserve(6);
 
     state = State::Allocated;
   }
@@ -111,10 +138,10 @@ class LandmarkBlockAbsDynamic : public LandmarkBlock<Scalar> {
     BASALT_ASSERT(state == State::Allocated || state == State::NumericalFailure || state == State::Linearized ||
                   state == State::Marginalized);
 
-    // storage.setZero(num_rows, num_cols);
-    storage.setZero();
+    // Same as storage.setZero(): the other columns were zeroed in allocateLandmark() and are never written.
+    for (const auto& [col, width] : pose_col_ranges_) storage.middleCols(col, width).setZero();
+    storage.rightCols(num_cols - lm_idx).setZero();
     damping_rotations.clear();
-    damping_rotations.reserve(6);
 
     Scalar error_sum = 0;
 
@@ -345,13 +372,22 @@ class LandmarkBlockAbsDynamic : public LandmarkBlock<Scalar> {
   inline void addJp_diag2(VecX& res) const override {
     BASALT_ASSERT(state == State::Linearized);
 
-    for (const auto& [frame_id, idx_set] : res_idx_by_abs_pose_) {
-      const int pose_idx = aom_->abs_order_map.at(frame_id).first;
-      for (const int i : idx_set) {
-        const auto block = storage.block(2 * i, pose_idx, 2, POSE_SIZE);
+    // (frame id, residual index) of host and target of every observation, in (frame id, index) order
+    std::vector<std::pair<int64_t, int>> res_idx_by_abs_pose;
+    res_idx_by_abs_pose.reserve(2 * pose_tcid_vec.size());
+    for (size_t i = 0; i < pose_tcid_vec.size(); i++) {
+      res_idx_by_abs_pose.emplace_back(pose_tcid_vec[i]->first.frame_id, i);   // host
+      res_idx_by_abs_pose.emplace_back(pose_tcid_vec[i]->second.frame_id, i);  // target
+    }
+    std::sort(res_idx_by_abs_pose.begin(), res_idx_by_abs_pose.end());
+    res_idx_by_abs_pose.erase(std::unique(res_idx_by_abs_pose.begin(), res_idx_by_abs_pose.end()),
+                              res_idx_by_abs_pose.end());
 
-        res.template segment<POSE_SIZE>(pose_idx) += block.colwise().squaredNorm();
-      }
+    for (const auto& [frame_id, i] : res_idx_by_abs_pose) {
+      const int pose_idx = aom_->abs_order_map.at(frame_id).first;
+      const auto block = storage.block(2 * i, pose_idx, 2, POSE_SIZE);
+
+      res.template segment<POSE_SIZE>(pose_idx) += block.colwise().squaredNorm();
     }
   }
 
@@ -449,7 +485,13 @@ class LandmarkBlockAbsDynamic : public LandmarkBlock<Scalar> {
       Scalar tau;
       storage.col(lm_idx + k).segment(k, remainingRows).makeHouseholder(tempVector2, tau, beta);
 
-      storage.block(k, 0, remainingRows, num_cols).applyHouseholderOnTheLeft(tempVector2, tau, tempVector1.data());
+      // The reflection acts on each column separately and keeps zero columns zero, so apply it only to the
+      // columns that can be non-zero (same result as on all num_cols columns).
+      for (const auto& [col, width] : pose_col_ranges_) {
+        storage.block(k, col, remainingRows, width).applyHouseholderOnTheLeft(tempVector2, tau, tempVector1.data());
+      }
+      storage.block(k, lm_idx, remainingRows, num_cols - lm_idx)
+          .applyHouseholderOnTheLeft(tempVector2, tau, tempVector1.data());
     }
   }
 
@@ -551,7 +593,8 @@ class LandmarkBlockAbsDynamic : public LandmarkBlock<Scalar> {
   const AbsOrderMap* aom_ = nullptr;
   bool is_fixed_ = false;
 
-  std::map<int64_t, std::set<int>> res_idx_by_abs_pose_;
+  // (first column, width) of the pose-Jacobian column ranges that can be non-zero, ascending
+  std::vector<std::pair<size_t, size_t>> pose_col_ranges_;
 };
 
 }  // namespace basalt
