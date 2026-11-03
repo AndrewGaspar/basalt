@@ -40,7 +40,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cmath>
 #include <cstdlib>
 
-#ifdef __AVX2__
+#if defined(__AVX2__) || defined(__SSE__)
 #include <immintrin.h>
 #endif
 
@@ -58,10 +58,19 @@ struct Weights {
   int w00, w01, w10, w11;
 };
 
+//! Round to nearest (even), like cvRound; std::lrint is an out-of-line libm call without -fno-math-errno
+static inline int roundInt(float x) {
+#ifdef __SSE__
+  return _mm_cvt_ss2si(_mm_set_ss(x));
+#else
+  return int(std::lrint(x));
+#endif
+}
+
 static Weights weights(float a, float b) {
-  const int w00 = int(std::lrint((1.f - a) * (1.f - b) * (1 << W_BITS)));
-  const int w01 = int(std::lrint(a * (1.f - b) * (1 << W_BITS)));
-  const int w10 = int(std::lrint((1.f - a) * b * (1 << W_BITS)));
+  const int w00 = roundInt((1.f - a) * (1.f - b) * (1 << W_BITS));
+  const int w01 = roundInt(a * (1.f - b) * (1 << W_BITS));
+  const int w10 = roundInt((1.f - a) * b * (1 << W_BITS));
   return {w00, w01, w10, (1 << W_BITS) - w00 - w01 - w10};
 }
 
