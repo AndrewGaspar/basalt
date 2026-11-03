@@ -1277,6 +1277,10 @@ bool SqrtKeypointVioEstimator<Scalar_>::optimize() {
       lqr->log_problem_stats(stats);
     }
 
+    // the landmark database's structure does not change during the optimization
+    typename BundleAdjustmentBase<Scalar>::ErrorTerms error_terms;
+    this->prepareErrorTerms(error_terms);
+
     bool terminated = false;
     bool converged = false;
     std::string message;
@@ -1490,7 +1494,7 @@ bool SqrtKeypointVioEstimator<Scalar_>::optimize() {
         {
           Timer t;
           Timer tt;  // TODO: Unify timing measurements
-          computeError(after_update_vision_and_inertial_error);
+          computeError(after_update_vision_and_inertial_error, error_terms);
           computeMargPriorError(marg_data, after_update_marg_prior_error);
 
           Scalar after_update_imu_error = 0, after_bg_error = 0, after_ba_error = 0;

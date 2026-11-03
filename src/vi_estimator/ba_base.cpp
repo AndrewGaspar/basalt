@@ -204,6 +204,92 @@ void BundleAdjustmentBase<Scalar_>::computeError(Scalar& error,
 }
 
 template <class Scalar_>
+void BundleAdjustmentBase<Scalar_>::prepareErrorTerms(ErrorTerms& terms) const {
+  terms.hosts.clear();
+  terms.targets.clear();
+  terms.obs.clear();
+
+  for (const auto& [tcid_h, target_map] : lmdb.getObservations()) {
+    typename ErrorTerms::Host& host = terms.hosts.emplace_back();
+    host.tcid_h = tcid_h;
+    host.target_begin = terms.targets.size();
+
+    for (const auto& [tcid_t, kpt_ids] : target_map) {
+      typename ErrorTerms::Target& target = terms.targets.emplace_back();
+      target.tcid_t = tcid_t;
+      target.obs_begin = terms.obs.size();
+
+      for (LandmarkId kpt_id : kpt_ids) {
+        const Landmark<Scalar>& kpt_pos = lmdb.getLandmark(kpt_id);
+        terms.obs.emplace_back(&kpt_pos, &kpt_pos.obs.at(tcid_t));
+      }
+      target.obs_end = terms.obs.size();
+    }
+    host.target_end = terms.targets.size();
+  }
+}
+
+template <class Scalar_>
+void BundleAdjustmentBase<Scalar_>::computeError(Scalar& error, const ErrorTerms& terms) const {
+  // Keep the arithmetic and its order identical to computeError(error, nullptr): one reduction over the host
+  // frames, the same per-host loops.
+  auto body = [&](const tbb::blocked_range<size_t>& range, Scalar local_error) {
+    for (size_t r = range.begin(); r != range.end(); ++r) {
+      const typename ErrorTerms::Host& host = terms.hosts[r];
+      const TimeCamId& tcid_h = host.tcid_h;
+
+      for (size_t ti = host.target_begin; ti != host.target_end; ++ti) {
+        const typename ErrorTerms::Target& target = terms.targets[ti];
+        const TimeCamId& tcid_t = target.tcid_t;
+
+        Mat4 T_t_h;
+
+        if (tcid_h != tcid_t) {
+          PoseStateWithLin state_h = getPoseStateWithLin(tcid_h.frame_id);
+          PoseStateWithLin state_t = getPoseStateWithLin(tcid_t.frame_id);
+
+          Sophus::SE3<Scalar> T_t_h_sophus = computeRelPose(state_h.getPose(), calib.T_i_c[tcid_h.cam_id],
+                                                            state_t.getPose(), calib.T_i_c[tcid_t.cam_id]);
+
+          T_t_h = T_t_h_sophus.matrix();
+        } else {
+          T_t_h.setIdentity();
+        }
+
+        std::visit(
+            [&](const auto& cam) {
+              for (size_t oi = target.obs_begin; oi != target.obs_end; ++oi) {
+                const Landmark<Scalar>& kpt_pos = *terms.obs[oi].first;
+                const Vec2& kpt_obs = *terms.obs[oi].second;
+
+                Vec2 res;
+
+                bool valid = linearizePoint(kpt_obs, kpt_pos, T_t_h, cam, res);
+
+                if (valid) {
+                  Scalar e = res.norm();
+
+                  Scalar huber_weight = e < huber_thresh ? Scalar(1.0) : huber_thresh / e;
+                  Scalar obs_weight = huber_weight / (obs_std_dev * obs_std_dev);
+
+                  local_error += Scalar(0.5) * (2 - huber_weight) * obs_weight * res.transpose() * res;
+                }
+              }
+            },
+            calib.intrinsics[tcid_t.cam_id].variant);
+      }
+    }
+
+    return local_error;
+  };
+
+  tbb::blocked_range<size_t> range(0, terms.hosts.size());
+  Scalar init = 0;
+  auto join = std::plus<Scalar>();
+  error = tbb::parallel_deterministic_reduce(range, init, body, join);
+}
+
+template <class Scalar_>
 template <class Scalar2>
 void BundleAdjustmentBase<Scalar_>::get_current_points(Eigen::aligned_vector<Eigen::Matrix<Scalar2, 3, 1>>& points,
                                                        std::vector<int>& ids) const {

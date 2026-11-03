@@ -57,6 +57,29 @@ class BundleAdjustmentBase {
   void computeError(Scalar& error, std::map<int, std::vector<std::pair<TimeCamId, Scalar>>>* outliers = nullptr,
                     Scalar outlier_threshold = 0) const;
 
+  // The observations of lmdb in computeError()'s evaluation order, with the map lookups done once. Valid while
+  // no landmark or observation is added or removed (e.g. during one optimize() call).
+  struct ErrorTerms {
+    struct Host {
+      TimeCamId tcid_h;
+      size_t target_begin = 0;
+      size_t target_end = 0;
+    };
+    struct Target {
+      TimeCamId tcid_t;
+      size_t obs_begin = 0;
+      size_t obs_end = 0;
+    };
+    std::vector<Host> hosts;
+    std::vector<Target> targets;
+    std::vector<std::pair<const Landmark<Scalar>*, const Vec2*>> obs;
+  };
+
+  void prepareErrorTerms(ErrorTerms& terms) const;
+
+  // Same as computeError(error) (bit for bit: same terms, same order, same reduction), without the lookups.
+  void computeError(Scalar& error, const ErrorTerms& terms) const;
+
   void filterOutliers(Scalar outlier_threshold, int min_num_obs);
 
   void optimize_single_frame_pose(PoseStateWithLin<Scalar>& state_t,
