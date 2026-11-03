@@ -101,6 +101,7 @@ void Klt8OpticalFlow::processingLoop() {
     if (img == nullptr) {
       stats.print();
       if (output_queue) output_queue->push(nullptr);
+      finished = true;
       break;
     }
     img->addTime("frontend_frames_received");
