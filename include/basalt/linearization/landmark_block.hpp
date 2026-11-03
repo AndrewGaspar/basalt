@@ -65,6 +65,7 @@ class LandmarkBlock {
   virtual ~LandmarkBlock() {};
 
   virtual bool isNumericalFailure() const = 0;
+  // Sets the block up for lm. May be called again on a block that was used before, to reuse it for another landmark.
   virtual void allocateLandmark(
       Landmark<Scalar>& lm,
       const Eigen::aligned_unordered_map<std::pair<TimeCamId, TimeCamId>, RelPoseLin<Scalar>>& relative_pose_lin,

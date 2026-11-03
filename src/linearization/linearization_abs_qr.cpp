@@ -50,6 +50,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace basalt {
 
+// Landmark blocks of destroyed linearizations, for reuse. Every VIO step builds two or three linearizations of a
+// few hundred landmarks, and each block owns several heap buffers (storage, observation vectors); reusing the
+// blocks keeps those (LandmarkBlock::allocateLandmark() resets a block for its new landmark). Per thread: a
+// linearization is created and destroyed on the estimator's thread.
+template <typename Scalar, int POSE_SIZE>
+static std::vector<std::unique_ptr<LandmarkBlock<Scalar>>>& landmarkBlockPool() {
+  thread_local std::vector<std::unique_ptr<LandmarkBlock<Scalar>>> pool;
+  return pool;
+}
+
 template <typename Scalar, int POSE_SIZE>
 LinearizationAbsQR<Scalar, POSE_SIZE>::LinearizationAbsQR(
     BundleAdjustmentBase<Scalar>* estimator, const AbsOrderMap& aom, const Options& options,
@@ -135,6 +145,19 @@ LinearizationAbsQR<Scalar, POSE_SIZE>::LinearizationAbsQR(
 
   landmark_blocks.resize(num_landmakrs);
 
+  // blocks of earlier linearizations first (see landmarkBlockPool())
+  {
+    auto& pool = landmarkBlockPool<Scalar, POSE_SIZE>();
+    for (auto& lb : landmark_blocks) {
+      if (pool.empty()) {
+        lb = LandmarkBlock<Scalar>::template createLandmarkBlock<POSE_SIZE>();
+      } else {
+        lb = std::move(pool.back());
+        pool.pop_back();
+      }
+    }
+  }
+
   {
     auto body = [&](const tbb::blocked_range<size_t>& range) {
       for (size_t r = range.begin(); r != range.end(); ++r) {
@@ -142,8 +165,6 @@ LinearizationAbsQR<Scalar, POSE_SIZE>::LinearizationAbsQR(
         auto& lb = landmark_blocks[r];
         auto& landmark = lmdb_.getLandmark(lm_id);
         bool is_fixed = fixed_frames && fixed_frames->count(landmark.host_kf_id.frame_id) > 0;
-
-        lb = LandmarkBlock<Scalar>::template createLandmarkBlock<POSE_SIZE>();
 
         lb->allocateLandmark(landmark, relative_pose_lin, calib, aom, options.lb_options, is_fixed);
       }
@@ -176,7 +197,15 @@ LinearizationAbsQR<Scalar, POSE_SIZE>::LinearizationAbsQR(
 }
 
 template <typename Scalar, int POSE_SIZE>
-LinearizationAbsQR<Scalar, POSE_SIZE>::~LinearizationAbsQR() = default;
+LinearizationAbsQR<Scalar, POSE_SIZE>::~LinearizationAbsQR() {
+  // hand the landmark blocks (and their buffers) on to the next linearization on this thread
+  auto& pool = landmarkBlockPool<Scalar, POSE_SIZE>();
+  constexpr size_t max_pooled_blocks = 4096;
+  for (auto& lb : landmark_blocks) {
+    if (pool.size() >= max_pooled_blocks) break;
+    pool.emplace_back(std::move(lb));
+  }
+}
 
 template <typename Scalar_, int POSE_SIZE_>
 void LinearizationAbsQR<Scalar_, POSE_SIZE_>::log_problem_stats(ExecutionStats& stats) const {
