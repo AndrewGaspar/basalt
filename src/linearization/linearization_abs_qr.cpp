@@ -35,9 +35,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <basalt/linearization/linearization_abs_qr.hpp>
 
+#include <algorithm>
+
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
+#include <tbb/global_control.h>
 #include <tbb/parallel_reduce.h>
+#include <tbb/task_arena.h>
 
 #include <basalt/utils/ba_utils.h>
 #include <basalt/linearization/imu_block.hpp>
@@ -508,6 +512,18 @@ void LinearizationAbsQR<Scalar, POSE_SIZE>::get_dense_Q2Jp_Q2r(MatX& Q2Jp, VecX&
   get_dense_Q2Jp_Q2r_marg_prior(Q2Jp, Q2r, marg_start_idx);
 }
 
+// Grain size for the landmark reduction in get_dense_H_b(). parallel_deterministic_reduce splits the range down to the
+// grain size whatever the number of threads, and every split zeroes and later adds its own opt_size^2 H: with the
+// default grain size of 1 that is one H per landmark, more work than the landmark's own (compact) J^T J. Split into
+// a few chunks per allowed thread instead (none with one thread). The split, and with it the summation order,
+// depends only on the number of landmarks and the configured thread count, so results stay reproducible.
+static size_t reductionGrainSize(size_t num_items) {
+  const size_t threads = std::min<size_t>(tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism),
+                                          tbb::this_task_arena::max_concurrency());
+  if (threads <= 1) return std::max<size_t>(num_items, 1);
+  return std::max<size_t>(num_items / (4 * threads), 1);
+}
+
 template <typename Scalar, int POSE_SIZE>
 void LinearizationAbsQR<Scalar, POSE_SIZE>::get_dense_H_b(MatX& H, VecX& b) const {
   struct Reductor {
@@ -546,7 +562,7 @@ void LinearizationAbsQR<Scalar, POSE_SIZE>::get_dense_H_b(MatX& H, VecX& b) cons
   Reductor r(opt_size, landmark_blocks);
 
   // go over all host frames
-  tbb::blocked_range<size_t> range(0, landmark_block_idx.size());
+  tbb::blocked_range<size_t> range(0, landmark_block_idx.size(), reductionGrainSize(landmark_block_idx.size()));
   tbb::parallel_deterministic_reduce(range, r);
 
   // the landmark blocks only fill the upper triangle
