@@ -520,7 +520,7 @@ void LinearizationAbsQR<Scalar, POSE_SIZE>::get_dense_H_b(MatX& H, VecX& b) cons
     void operator()(const tbb::blocked_range<size_t>& range) {
       for (size_t r = range.begin(); r != range.end(); ++r) {
         auto& lb = landmark_blocks_[r];
-        lb->add_dense_H_b(H_, b_);
+        lb->add_dense_H_b_upper(H_, b_);
       }
     }
 
@@ -548,6 +548,9 @@ void LinearizationAbsQR<Scalar, POSE_SIZE>::get_dense_H_b(MatX& H, VecX& b) cons
   // go over all host frames
   tbb::blocked_range<size_t> range(0, landmark_block_idx.size());
   tbb::parallel_deterministic_reduce(range, r);
+
+  // the landmark blocks only fill the upper triangle
+  r.H_.template triangularView<Eigen::StrictlyLower>() = r.H_.transpose();
 
   // Add imu
   add_dense_H_b_imu(r.H_, r.b_);

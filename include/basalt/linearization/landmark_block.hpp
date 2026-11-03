@@ -110,6 +110,9 @@ class LandmarkBlock {
 
   virtual void add_dense_H_b(MatX& H, VecX& b) const = 0;
 
+  // Like add_dense_H_b(H, b), but only the upper triangle of H has to be valid afterwards (the caller mirrors it).
+  virtual void add_dense_H_b_upper(MatX& H, VecX& b) const { add_dense_H_b(H, b); }
+
   virtual void add_dense_H_b_rel(MatX& H_rel, VecX& b_rel, const std::map<TimeCamId, size_t>& rel_order) const = 0;
 
   virtual const Eigen::PermutationMatrix<Eigen::Dynamic>& get_rel_permutation() const = 0;
