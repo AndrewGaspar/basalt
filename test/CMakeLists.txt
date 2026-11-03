@@ -22,6 +22,9 @@ target_link_libraries(test_linearization gtest gtest_main basalt_internal)
 add_executable(test_patch src/test_patch.cpp)
 target_link_libraries(test_patch gtest gtest_main basalt_internal)
 
+add_executable(test_klt8 src/test_klt8.cpp)
+target_link_libraries(test_klt8 gtest gtest_main basalt_internal)
+
 enable_testing()
 
 include(GoogleTest)
@@ -32,3 +35,4 @@ gtest_add_tests(TARGET test_nfr AUTO)
 gtest_add_tests(TARGET test_qr AUTO)
 gtest_add_tests(TARGET test_linearization AUTO)
 gtest_add_tests(TARGET test_patch AUTO)
+gtest_add_tests(TARGET test_klt8 AUTO)
