@@ -31,7 +31,7 @@
         "config.optical_flow_klt_converged_eps": 0.01,
         "config.optical_flow_klt_min_eig": 0.0001,
         "config.optical_flow_klt_max_error": 0.0,
-        "config.optical_flow_klt_max_points_cell": 2,
+        "config.optical_flow_klt_max_points_cell": 1,
         "config.optical_flow_klt_gain_bias": true,
         "config.optical_flow_klt_opencv": false,
         "config.vio_linearization_type": "ABS_QR",
