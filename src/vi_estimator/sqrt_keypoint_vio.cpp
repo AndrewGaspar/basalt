@@ -1348,6 +1348,11 @@ bool SqrtKeypointVioEstimator<Scalar_>::optimize() {
       //   std::cout << "\t[INFO] Stage 1" << std::endl;
       //}
 
+      // dense reduced camera system; only depends on the linearization above, so it is built once and reused when
+      // a step is rejected (the inner loop below only changes lambda, and restore() undoes the increment)
+      MatX H;
+      VecX b;
+
       // inner loop for backtracking in LM (still count as main iteration
       // though)
       for (int j = 0; it <= config.vio_max_iterations && !terminated; j++) {
@@ -1390,25 +1395,24 @@ bool SqrtKeypointVioEstimator<Scalar_>::optimize() {
           Timer tt;  // TODO: Unify timing measurements
 
           // get dense reduced camera system
-          MatX H;
-          VecX b;
+          if (j == 0) {
+            lqr->get_dense_H_b(H, b);
 
-          lqr->get_dense_H_b(H, b);
-
-          if (config.vio_fix_long_term_keyframes) {
-            for (const int64_t& ts : ltkfs) {
-              if (aom.abs_order_map.count(ts) == 0) {
-                std::cerr << "[UNEXPECTED] ltkfs ts=" << ts << " not in aom" << std::endl;
-                continue;
+            if (config.vio_fix_long_term_keyframes) {
+              for (const int64_t& ts : ltkfs) {
+                if (aom.abs_order_map.count(ts) == 0) {
+                  std::cerr << "[UNEXPECTED] ltkfs ts=" << ts << " not in aom" << std::endl;
+                  continue;
+                }
+                const auto& [idx, size] = aom.abs_order_map.at(ts);
+                H.template block<>(idx, 0, size, H.cols()).setZero();
+                H.diagonal().template segment<POSE_SIZE>(idx).array() = 1e20;
+                b.template segment<>(idx, size).setZero();
               }
-              const auto& [idx, size] = aom.abs_order_map.at(ts);
-              H.template block<>(idx, 0, size, H.cols()).setZero();
-              H.diagonal().template segment<POSE_SIZE>(idx).array() = 1e20;
-              b.template segment<>(idx, size).setZero();
             }
-          }
 
-          stats.add("get_dense_H_b", t.reset()).format("ms");
+            stats.add("get_dense_H_b", t.reset()).format("ms");
+          }
 
           int iter = 0;
           bool inc_valid = false;
